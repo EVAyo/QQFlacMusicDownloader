@@ -5,13 +5,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "type": "java",
-            "name": "启动main函数",
-            "request": "launch",
-            "mainClass": "main",
-            "projectName": "qqmusicDownloader_f6dd27fa",
-        },
-        {
             "name": "调试当前Python文件",
             "type": "python",
             "request": "launch",

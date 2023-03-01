@@ -1,214 +1,58 @@
 # -*- coding: utf-8 -*-
+#  Copyright (c) 2023. 秋城落叶, Inc. All Rights Reserved
+#  @作者         : 秋城落叶(QiuChenly)
+#  @邮件         : 1925374620@qq.com
+#  @文件         : 项目 [qqmusic] - main.py
+#  @修改时间    : 2023-03-02 03:39:25
+#  @上次修改    : 2023/3/2 上午3:39
 import base64
 import math
 import requests
 import os
 import json
-from pyDes import des, PAD_PKCS5, CBC
 import threading
 
-# 加解密工具
+from src.Api.QQMusic import getQQMusicDownloadLinkByMacApp, getQQMusicDownloadLinkV1, getQQMusicMediaLyric, \
+    getQQMusicSearch, getQQMusicFileName, getQQMusicLyricByMacApp, setQQCookie
+from src.Types.Types import Songs
 
-
-def decryptAndSetCookie(text: str):
-    replace = text.replace("-", "").replace("|", "")
-
-    if len(replace) < 10 or replace.find("%") == -1:
-        return False
-
-    split = replace.split("%")
-    key = split[0]
-    qq = str(decryptDES(split[1], key[0:8]), "utf-8")
-    if len(qq) < 8:
-        qq += "QMD"
-    mkey = str(decryptDES(key, qq[0:8]), "utf-8")
-    return mkey, qq   # 用对象的encrypt方法加密
-
-
-# des解密
-def decryptDES(strs: str, key: str): return des(
-    key, CBC, key, padmode=PAD_PKCS5).decrypt(base64.b64decode(str(strs)))
-
-
-# des加密
-def encryptDES(text: str, key: str): return str(base64.b64encode(
-    des(key, CBC, key, padmode=PAD_PKCS5).encrypt(text)), 'utf-8')
-
-
-# 加密字符串
-def encryptText(text: str, qq: str):
-    key = ("QMD"+qq)[0:8]
-    return encryptDES(text, key)
-
-
-# 解密字符串
-def decryptText(text: str, qq: str): return str(decryptDES(
-    text.replace("-", ""), ("QMD" + qq)[0:8]), 'utf-8')
-
-
-def getHead():
-    return {
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36',
-        'content-type': 'application/json; charset=UTF-8',
-        "referer": "https://y.qq.com/portal/profile.html"
-    }
-
-
-sess = requests.Session()
+threadLock = threading.Lock()  # 多线程锁 防止同时创建同一个文件夹冲突
 
 
 def clear():
     print('\033c', end='')
 
 
-def buildSearchContent(song='', page=1, page_per_num=100):
-    return {
-        "comm": {"ct": "19", "cv": "1845"},
-        "music.search.SearchCgiService": {
-            "method": "DoSearchForQQMusicDesktop",
-            "module": "music.search.SearchCgiService",
-            "param": {"query": song, "num_per_page": page_per_num, "page_num": page}
-        }
-    }
-
-
-def searchMusic(key="", page=1):
-    # base url
-    url = "https://u.y.qq.com/cgi-bin/musicu.fcg"
-    # base data content from qqmusic pc-client-apps
-    data = buildSearchContent(key, page)
-    data = json.dumps(data, ensure_ascii=False)
-    data = data.encode('utf-8')
-    res = sess.post(url, data, headers=getHead())
-    jsons = res.json()
-
-    # 开始解析QQ音乐的搜索结果
-    res = jsons['music.search.SearchCgiService']['data']
-    list = res['body']['song']['list']
-    meta = res['meta']
-
-    # 数据清洗,去掉搜索结果中多余的数据
-    list_clear = []
-    for i in list:
-        list_clear.append({
-            'album': i['album'],
-            'docid': i['docid'],
-            'id': i['id'],
-            'mid': i['mid'],
-            'name': i['title'],
-            'singer': i['singer'],
-            'time_public': i['time_public'],
-            'title': i['title'],
-            'file': i['file'],
-        })
-
-    # rebuild json
-    # list_clear: 搜索出来的歌曲列表
-    # {
-    #   size 搜索结果总数
-    #   next 下一搜索页码 -1表示搜索结果已经到底
-    #   cur  当前搜索结果页码
-    # }
-    return list_clear, {
-        'size': meta['sum'],
-        'next': meta['nextpage'],
-        'cur': meta['curpage']
-    }
-
-
-def getCookie():
-    uid = "822a3b85-a5c9-438e-a277-a8da412e8265"
-    systemVersion = "1.7.2"
-    versionCode = "76"
-    deviceBrand = "360"
-    deviceModel = "QK1707-A01"
-    appVersion = "7.1.2"
-    encIP = encryptText(
-        f'{uid}{deviceModel}{deviceBrand}{systemVersion}{appVersion}{versionCode}', "F*ckYou!")
-
-    u = 'http://8.136.185.193/api/Cookies'
-    d = f'\{{"appVersion":"{appVersion}","deviceBrand":"{deviceBrand}","deviceModel":"{deviceModel}","ip":"{encIP}","systemVersion":"{systemVersion}","uid":"{uid}","versionCode":"{versionCode}"\}}'.replace(
-        "\\", "")
-
-    ret = sess.post(u, d, headers={
-        'Content-Type': 'application/json;  charset=UTF-8'
-    })
-    return ret.text
-
-
-def getDownloadLink(fileName):
-    u = 'http://8.136.185.193/api/MusicLink/link'
-    d = f'"{encryptText(fileName, mqq_)}"'
-    ret = sess.post(
-        u, d, headers={
-            "Content-Type": "application/json;charset=utf-8"
-        })
-    return ret.text
-
-
-def getMusicFileName(code, mid, format): return f'{code}{mid}.{format}'
-
-
-def getQQServersCallback(url, method=0, data={}):
-    global mqq_
-    global mkey_
-    d = json.dumps(data, ensure_ascii=False)
-    h = {
-        'referer': 'https://y.qq.com/portal/profile.html',
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36',
-        'cookie': f'qqmusic_key={mkey_};qqmusic_uin={mqq_};',
-        'content-type': 'application/json; charset=utf-8'
-    }
-    if method == 0:
-        d = sess.get(url, headers=h)
-    else:
-        d = sess.post(url, d, headers=h)
-    return d
-
-
-def getMediaLyric(mid):
-    d = getQQServersCallback(
-        f'https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={mid}&g_tk=5381')
-    d = d.text  # MusicJsonCallback(...)
-    d = d[18:-1]
-    return json.loads(d)
-
-
-def parseSectionByNotFound(filename, songmid):
-    d = getQQServersCallback('https://u.y.qq.com/cgi-bin/musicu.fcg', 1, {"comm": {"ct": "19", "cv": "1777"}, "queryvkey": {"method": "CgiGetVkey", "module": "vkey.GetVkeyServer",                                 "param": {
-        "uin": mqq_,
-        "guid": "QMD50",
-        "referer": "y.qq.com",
-        "songtype": [1],
-        "filename": [filename], "songmid": [songmid]
-    }}})
-    d = d.json()
-    vkey = d['queryvkey']['data']['midurlinfo'][0]['purl']
-    return vkey
-
-
-mkey_ = ""
-mqq_ = ""
-threadLock = threading.Lock()  # 多线程锁 防止同时创建同一个文件夹冲突
-
-
 def downSingle(it):
     global download_home, onlyShowSingerSelfSongs, musicAlbumsClassification
     songmid = it['songmid']
-    file = getMusicFileName(it['prefix'], it['mid'], it['extra'])
-    link = getDownloadLink(file)
-    musicFileInfo = f"{it['singer']} - {it['title']} [{it['notice']}] {round(int(it['size'])/1024/1024,2)}MB - {file}"
+    file = getQQMusicFileName(it['prefix'], it['mid'], it['extra'])
+    musicid = it['musicid']
+    link = getQQMusicDownloadLinkByMacApp(file, songmid)
+    # link = getQQMusicDownloadLinkV1(file, songmid)  # 早期方法 可食用
+    vkey = link['purl']
+
+    musicFileInfo = f"{it['singer']} - {it['title']} [{it['notice']}] {round(int(it['size']) / 1024 / 1024, 2)}MB - {file}"
+
+    # 测试歌词下载保存接口代码
+    # lyric = getQQMusicMediaLyric(songmid) # 早期方法 已弃用
+    # lyric = getQQMusicLyricByMacApp(musicid)
+    # lyric = getQQMusicLyricByWeb(musicid)
+    # lyrics = base64.b64decode(lyric['lyric'])
+    # with open("lyric.txt", 'wb') as code:
+    #     code.write(lyrics)
+    #     code.flush()
+    # 测试歌词下载代码结束
+
+    if vkey == '':
+        print(f"找不到资源文件! 解析歌曲下载地址失败！{musicFileInfo}")
+        return False
+
+    link = f'http://ws.stream.qqmusic.qq.com/{vkey}&fromtag=140'
+
     if link.find('qqmusic.qq.com') == -1:
-        if link.find('"title":"Not Found"') != -1:
-            # 开始第二次解析
-            vkey = parseSectionByNotFound(file, songmid)
-            if vkey == '':
-                print(f"找不到资源文件! 解析歌曲下载地址失败！{musicFileInfo}")
-                return False
-            link = f'http://ws.stream.qqmusic.qq.com/{vkey}&fromtag=140'
-        else:
-            print(f"无法加载资源文件！解析歌曲下载地址失败！{musicFileInfo}")
-            return False
+        print(f"无法加载资源文件！解析歌曲下载地址失败！{musicFileInfo}")
+        return False
 
     # prepare
     localFile = f"{it['singer']} - {it['title']}.{it['extra']}".replace(
@@ -216,7 +60,7 @@ def downSingle(it):
     localLrcFile = f"{it['singer']} - {it['title']}.lrc".replace(
         "/", "\\")
     mShower = localFile
-    my_path = download_home+it['singer']+'/'
+    my_path = download_home + it['singer'] + '/'
 
     if not onlyShowSingerSelfSongs:
         if not os.path.exists(my_path):
@@ -237,12 +81,12 @@ def downSingle(it):
     # 下载歌词
     if not os.path.exists(localLrcFile):
         print(f"本地歌词文件不存在,准备自动下载: [{localLrcFile}].")
-        lyric = getMediaLyric(songmid)  # lyric trans
-        if int(lyric['retcode']) == 0:
+        # lyric = getQQMusicMediaLyric(songmid)  # lyric trans
+        lyric = getQQMusicLyricByMacApp(musicid)
+        if lyric['lyric'] != '':
             # "retcode": 0,
             # "code": 0,
             # "subcode": 0,
-
             # {'retcode': -1901, 'code': -1901, 'subcode': -1901}
             # 外语歌曲有翻译 但是👴不需要！
             lyric = base64.b64decode(lyric['lyric'])
@@ -261,7 +105,7 @@ def downSingle(it):
             print(
                 f"本地文件尺寸不符: {os.path.getsize(localFile)}/{int(it['size'])},开始覆盖下载 [{mShower}].")
     print(f'正在下载 | {it["album"]} / {musicFileInfo}')
-    f = sess.get(link)
+    f = requests.get(link)
     with open(localFile, 'wb') as code:
         code.write(f.content)
         code.flush()
@@ -311,7 +155,7 @@ def needFilter(fileName=''):
     return False
 
 
-def parseList(list, target):
+def parseList(mlist, target):
     """
     处理音乐列表
     如果需要屏蔽显示某些类型的歌曲，可以在这个函数里末尾处理
@@ -325,9 +169,9 @@ def parseList(list, target):
     """
     add = 1
     span = "  "
-    songs = []
+    songs: list[Songs] = []
     lists = []
-    for i in list:
+    for i in mlist:
         singer = i['singer'][0]['name']
         # print(json.dumps(i['singer']))
         if singer != target and onlyShowSingerSelfSongs:
@@ -391,6 +235,9 @@ def parseList(list, target):
             format = "m4a"
             qStr = "低品质 96kbps"
             fsize = int(id['size_96aac'])
+        else:
+            print("这首歌曲好像无法下载,请检查是否有vip权限.")
+            return False
 
         albumName = str(i["album"]['title']).strip(" ")
         if albumName == '':
@@ -410,17 +257,19 @@ def parseList(list, target):
             'extra': format,
             'notice': qStr,
             'mid': mid,
+            'musicid': i['id'],
             'songmid': i['mid'],
             'size': fsize,
             'title': flacName,
             'singer': fixWindowsFileName2Normal(f'{singer}'),
-            'album': fixWindowsFileName2Normal(albumName)})
+            'album': fixWindowsFileName2Normal(albumName)}
+        )
 
         time_publish = i["time_public"]
         if time_publish == '':
-            time_publish = "0000-00-00"
+            time_publish = "1970-01-01"
         lists.append(
-            f'{add} {span}{time_publish} {singer} - {i["title"]}')
+            f'{add} {span}{time_publish} {singer} - {i["title"]} | {qStr}')
         add += 1
     # 这部分其实可以只返回songs 但是代码我懒得改了 反正又不是不能用=v=
     return lists, songs
@@ -430,10 +279,10 @@ def downAll(target, size):
     """
     一键下载所有搜索结果
     """
-    num = math.ceil(size/100)
+    num = math.ceil(size / 100)
     result = []
     for i in range(1, num + 1):
-        (list, meta) = searchMusic(target, i)
+        (list, meta) = getQQMusicSearch(target, i)
         list, songs = parseList(list, target)
         result.extend(songs)
     return result
@@ -443,7 +292,7 @@ def _main(target=""):
     """
     主函数 不建议随意修改 请在上方函数修改
     """
-    global mkey_, mqq_, download_home, dualThread, searchKey, onlyShowSingerSelfSongs, musicAlbumsClassification
+    global download_home, dualThread, searchKey, onlyShowSingerSelfSongs, musicAlbumsClassification
 
     # fix create directory files error(if not exists)
     if not os.path.exists(download_home):
@@ -453,7 +302,6 @@ def _main(target=""):
     my_path = f'{download_home}{target + "/" if onlyShowSingerSelfSongs else ""}'
     if onlyShowSingerSelfSongs and not os.path.exists(my_path):
         os.mkdir(f"{my_path}")
-    mkey_, mqq_ = decryptAndSetCookie(getCookie())
 
     # 根据文件名获取下载链接
     # getDownloadLink("RS01003w2xz20QlUZt.flac")
@@ -463,13 +311,13 @@ def _main(target=""):
     # 解密后 RS01 003w2xz20QlUZt . flac
     page = 1
     while True:
-        (list, meta) = searchMusic(target, page)
-        list, songs = parseList(list, target)
+        (lst, meta) = getQQMusicSearch(target, page)
+        lst, songs = parseList(lst, target)
         while True:
             clear()
             print(
-                "==== Welcome to QQMusic Digit High Quality Music Download Center ====\n")
-            for li in list:
+                "==== Welcome to Digit High Quality Music Download Center $$ Creative By QiuChenly ====\n")
+            for li in lst:
                 print(li)
             willDownAll = False
             print(f"""
@@ -480,11 +328,11 @@ p 切换上一页 (Previous)
 l 一键下载所有歌曲 (All)
 a 一键下载本页所有歌曲 (All)
 1 <如: 1> 若要下载某一首,请输入歌曲前方的序号 (Single)
-s [{ searchKey      }] 修改搜索关键词 (Search)
-t [{ dualThread     }] 修改当前线程并发. (Thread)
-h 修改当前下载缓存的主目录 [{ download_home  }] (Download Home)
-o [{ '已开启' if onlyShowSingerSelfSongs   else '已关闭' }] 切换模式:仅显示搜索的歌手歌曲 (OnlyMatchSinger&Songer)
-c [{ '已开启' if musicAlbumsClassification else '已关闭' }] 切换模式:按照专辑名称分文件夹归档音乐歌曲文件 (Music Albums Classification)
+s [{searchKey}] 修改搜索关键词 (Search)
+t [{dualThread}] 修改当前线程并发. (Thread)
+h 修改当前下载缓存的主目录 [{download_home}] (Download Home)
+o [{'已开启' if onlyShowSingerSelfSongs else '已关闭'}] 切换模式:仅显示搜索的歌手歌曲 (OnlyMatchSinger&Songer)
+c [{'已开启' if musicAlbumsClassification else '已关闭'}] 切换模式:按照专辑名称分文件夹归档音乐歌曲文件 (Music Albums Classification)
 
 ==== 请在下方输入指令 ====
 >""", end='')
@@ -547,7 +395,7 @@ c [{ '已开启' if musicAlbumsClassification else '已关闭' }] 切换模式:�
                 except:
                     print("输入无效字符,请重新输入。")
                     continue
-                it = songs[op-1]
+                it = songs[op - 1]
                 downSingle(it)
             print("下载完成!")
         page += 1
@@ -585,7 +433,6 @@ dualThread = 5
 #####  如果你的宽带>=1000Mbps 可以适当调整至64
 #####  100Mbps左右的小宽带不建议调高 会导致带宽不足连接失败
 """
-
 
 searchKey = "周杰伦"
 """
@@ -630,8 +477,8 @@ if not os.path.exists(cfgName):
 
 # read default config
 with open(cfgName, encoding='utf-8') as cfg:
-    list = cfg.read()
-    params = json.loads(list)
+    cfgLst = cfg.read()
+    params = json.loads(cfgLst)
     download_home = params['download_home']
     onlyShowSingerSelfSongs = bool(params['onlyShowSingerSelfSongs'])
     searchKey = params['searchKey']
@@ -643,4 +490,7 @@ with open(cfgName, encoding='utf-8') as cfg:
     if not os.path.exists(download_home):
         initEnv()
 
+print("请输入Cookie(扫码登录网页版qq音乐随便复制个请求的Cookie就可以): ")
+Cookie = input()
+setQQCookie(Cookie)
 _main(searchKey)
